@@ -1,0 +1,110 @@
+ #include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+const int trig1 = 2;
+const int echo1 = 3;
+const int trig2 = 4;
+const int echo2 = 5;
+
+const float DISTANCE_METERS = 1.0;
+const float TRIGGER_DISTANCE = 50.0;
+const unsigned long MIN_TRAVEL_TIME = 200;
+const unsigned long MAX_TRAVEL_TIME = 2000;
+
+bool sensor1Triggered = false;
+unsigned long triggerTime = 0;
+
+float getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) return -1;
+  return (duration * 0.0343) / 2;
+}
+
+void showReady() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Ball Speed Test");
+  lcd.setCursor(0, 1);
+  lcd.print("Ready!");
+}
+
+void setup() {
+  pinMode(trig1, OUTPUT);
+  pinMode(echo1, INPUT);
+  pinMode(trig2, OUTPUT);
+  pinMode(echo2, INPUT);
+  lcd.init();
+  lcd.backlight();
+  Serial.begin(9600);
+  showReady();
+}
+
+void loop() {
+  float d1 = getDistance(trig1, echo1);
+  float d2 = getDistance(trig2, echo2);
+
+  Serial.print("S1: "); Serial.print(d1);
+  Serial.print("  S2: "); Serial.println(d2);
+
+  // Sensor 1 triggered
+  if (!sensor1Triggered && d1 > 0 && d1 < TRIGGER_DISTANCE) {
+    sensor1Triggered = true;
+    triggerTime = millis();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Ball passed S1!");
+    lcd.setCursor(0, 1);
+    lcd.print("Waiting S2...");
+  }
+
+  if (sensor1Triggered) {
+    unsigned long elapsed = millis() - triggerTime;
+
+    // Timeout — ball missed S2
+    if (elapsed > MAX_TRAVEL_TIME) {
+      sensor1Triggered = false;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Missed!");
+      lcd.setCursor(0, 1);
+      lcd.print("Try again...");
+      delay(1500);
+      showReady();
+      return;
+    }
+
+    // Sensor 2 triggered
+    if (d2 > 0 && d2 < TRIGGER_DISTANCE && elapsed > MIN_TRAVEL_TIME) {
+      sensor1Triggered = false;
+      float seconds = elapsed / 1000.0;
+      float speed_ms = DISTANCE_METERS / seconds;
+      float speed_kmh = speed_ms * 3.6;
+
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Speed: ");
+      lcd.print(speed_kmh, 1);
+      lcd.print(" km/h");
+      lcd.setCursor(0, 1);
+      lcd.print(speed_ms, 2);
+      lcd.print(" m/s");
+
+      Serial.print("Speed: ");
+      Serial.print(speed_kmh);
+      Serial.println(" km/h");
+
+      delay(3000);
+      showReady();
+      return;
+    }
+  }
+
+  delay(50);
+}
