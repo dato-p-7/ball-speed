@@ -1,20 +1,16 @@
- #include <Wire.h>
-#include <LiquidCrystal_I2C.h>
+#include <SoftwareSerial.h>
 
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+SoftwareSerial bluetooth(10, 11);
 
 const int trig1 = 2;
 const int echo1 = 3;
 const int trig2 = 4;
 const int echo2 = 5;
+const int pinGreen = 7;
+const int pinRed = 8;
 
-const float DISTANCE_METERS = 1.0;
-const float TRIGGER_DISTANCE = 50.0;
-const unsigned long MIN_TRAVEL_TIME = 200;
-const unsigned long MAX_TRAVEL_TIME = 2000;
-
-bool sensor1Triggered = false;
-unsigned long triggerTime = 0;
+const float DISTANCE = 1.13;
+const float TRIGGER_DIST = 30.0;
 
 float getDistance(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
@@ -27,12 +23,14 @@ float getDistance(int trigPin, int echoPin) {
   return (duration * 0.0343) / 2;
 }
 
-void showReady() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Ball Speed Test");
-  lcd.setCursor(0, 1);
-  lcd.print("Ready!");
+void setRed() {
+  digitalWrite(pinRed, HIGH);
+  digitalWrite(pinGreen, LOW);
+}
+
+void setGreen() {
+  digitalWrite(pinGreen, HIGH);
+  digitalWrite(pinRed, LOW);
 }
 
 void setup() {
@@ -40,71 +38,86 @@ void setup() {
   pinMode(echo1, INPUT);
   pinMode(trig2, OUTPUT);
   pinMode(echo2, INPUT);
-  lcd.init();
-  lcd.backlight();
+  pinMode(pinGreen, OUTPUT);
+  pinMode(pinRed, OUTPUT);
   Serial.begin(9600);
-  showReady();
+  bluetooth.begin(9600);
+  setRed();
+  bluetooth.println("Ball Speed Test Ready!");
+  bluetooth.println("Place ball in front of S1");
 }
 
 void loop() {
   float d1 = getDistance(trig1, echo1);
-  float d2 = getDistance(trig2, echo2);
 
-  Serial.print("S1: "); Serial.print(d1);
-  Serial.print("  S2: "); Serial.println(d2);
-
-  // Sensor 1 triggered
-  if (!sensor1Triggered && d1 > 0 && d1 < TRIGGER_DISTANCE) {
-    sensor1Triggered = true;
-    triggerTime = millis();
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Ball passed S1!");
-    lcd.setCursor(0, 1);
-    lcd.print("Waiting S2...");
+  // No ball at S1 — red light
+  if (d1 <= 0 || d1 >= TRIGGER_DIST) {
+    setRed();
+    return;
   }
 
-  if (sensor1Triggered) {
-    unsigned long elapsed = millis() - triggerTime;
+  // Ball detected at S1 — green light
+  setGreen();
+  bluetooth.println("S1: Ball ready - HIT IT!");
+  Serial.println("Ball at S1!");
 
-    // Timeout — ball missed S2
-    if (elapsed > MAX_TRAVEL_TIME) {
-      sensor1Triggered = false;
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Missed!");
-      lcd.setCursor(0, 1);
-      lcd.print("Try again...");
-      delay(1500);
-      showReady();
-      return;
-    }
-
-    // Sensor 2 triggered
-    if (d2 > 0 && d2 < TRIGGER_DISTANCE && elapsed > MIN_TRAVEL_TIME) {
-      sensor1Triggered = false;
-      float seconds = elapsed / 1000.0;
-      float speed_ms = DISTANCE_METERS / seconds;
-      float speed_kmh = speed_ms * 3.6;
-
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Speed: ");
-      lcd.print(speed_kmh, 1);
-      lcd.print(" km/h");
-      lcd.setCursor(0, 1);
-      lcd.print(speed_ms, 2);
-      lcd.print(" m/s");
-
-      Serial.print("Speed: ");
-      Serial.print(speed_kmh);
-      Serial.println(" km/h");
-
-      delay(3000);
-      showReady();
-      return;
-    }
+  // Wait for ball to leave S1
+  while (true) {
+    float check = getDistance(trig1, echo1);
+    if (check <= 0 || check >= TRIGGER_DIST) break;
+    delay(5);
   }
 
-  delay(50);
+  // T1 — ball just left sensor 1
+  unsigned long t1 = micros();
+  setRed();
+  bluetooth.println("Ball kicked! Waiting S2...");
+  Serial.println("Ball kicked!");
+
+  // Wait for ball to reach sensor 2
+  bool caught = false;
+  unsigned long t2 = 0;
+  unsigned long startWait = millis();
+
+  while (millis() - startWait < 5000) {
+    float d2 = getDistance(trig2, echo2);
+    if (d2 > 0 && d2 < TRIGGER_DIST) {
+      t2 = micros();
+      caught = true;
+      break;
+    }
+    delay(5);
+  }
+
+  if (caught) {
+    float dt = (t2 - t1) / 1000000.0;
+    float speed_ms = DISTANCE / dt;
+    float speed_kmh = speed_ms * 3.6;
+
+    setGreen();
+
+    bluetooth.print("Speed: ");
+    bluetooth.print(speed_kmh, 1);
+    bluetooth.println(" km/h");
+    bluetooth.print("Time: ");
+    bluetooth.print(dt, 4);
+    bluetooth.println(" s");
+    bluetooth.println("----------");
+
+    Serial.print("Speed: ");
+    Serial.print(speed_kmh, 1);
+    Serial.println(" km/h");
+
+    delay(5000);
+
+  } else {
+    setRed();
+    bluetooth.println("Missed S2! Try again...");
+    bluetooth.println("----------");
+    Serial.println("Missed S2!");
+    delay(2000);
+  }
+
+  setRed();
+  bluetooth.println("Place ball in front of S1");
 }
